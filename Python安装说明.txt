@@ -1,0 +1,95 @@
+Python安装与环境配置说明
+========================
+
+问题描述
+--------
+当运行程序时出现以下错误信息：
+"Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases."
+
+这是由于Windows系统中的Python执行别名设置或Python未正确安装导致的。
+
+解决方案
+--------
+
+方法一：下载并安装Python（推荐）
+
+1. 访问Python官方网站：
+   https://www.python.org/downloads/
+
+2. 下载最新版本的Python安装包（建议3.8或更高版本）
+
+3. 安装Python：
+   - 运行下载的安装包
+   - **重要**：安装时务必勾选"Add Python to PATH"选项
+   - 选择"Install Now"进行安装
+
+方法二：禁用Windows应用执行别名
+
+1. 打开Windows设置（Win + I）
+2. 进入"应用" > "高级应用设置" > "应用执行别名"
+3. 关闭以下两个选项的开关：
+   - "应用安装程序python.exe"
+   - "应用安装程序python3.exe"
+
+4. 重启电脑
+
+方法三：验证安装
+
+1. 按Win + R打开运行对话框
+2. 输入"cmd"打开命令提示符
+3. 输入以下命令并回车：
+   python --version
+   
+   如果显示类似"Python 3.x.x"的信息，则表示安装成功
+
+方法四：安装程序依赖库
+
+1. 打开命令提示符（CMD）或PowerShell
+2. 切换到程序目录：
+   cd /d "D:\短剧压制软件包\自编程序\快速转码"
+   
+3. 运行以下命令安装依赖库：
+   pip install -r requirements.txt
+   
+   或者单独安装customtkinter库：
+   pip install customtkinter
+   
+4. 等待安装完成后，重新运行"启动转码工具.bat"
+
+方法五：安装FFmpeg（重要）
+本程序需要FFmpeg来处理音视频文件，请确保已安装FFmpeg并将其添加到系统PATH中：
+
+1. 访问FFmpeg官网下载页面：
+   https://ffmpeg.org/download.html
+   
+2. Windows用户可以访问以下链接获取预编译版本：
+   https://www.gyan.dev/ffmpeg/builds/
+   
+3. 下载完整版本的FFmpeg压缩包（包含ffmpeg.exe, ffprobe.exe等文件）
+
+4. 解压到一个目录，例如：C:\ffmpeg
+
+5. 将FFmpeg添加到系统环境变量：
+   a. 右键"此电脑" > "属性" > "高级系统设置" > "环境变量"
+   b. 在"系统变量"中找到"Path"并编辑
+   c. 添加FFmpeg的bin目录路径，例如：C:\ffmpeg\bin\
+   d. 确定保存并重启电脑
+
+6. 验证安装：
+   打开命令提示符，输入"ffmpeg -version"，如果显示版本信息则表示安装成功
+
+方法四：添加Python到系统环境变量（如方法一仍无法解决）
+
+1. 找到Python安装目录（通常在C:\Users\[用户名]\AppData\Local\Programs\Python\Python3x\）
+2. 复制该目录路径
+3. 右键"此电脑" > "属性" > "高级系统设置" > "环境变量"
+4. 在"系统变量"中找到"Path"并编辑
+5. 添加Python安装目录路径和Scripts子目录路径：
+   - C:\Users\[用户名]\AppData\Local\Programs\Python\Python3x\
+   - C:\Users\[用户名]\AppData\Local\Programs\Python\Python3x\Scripts\
+
+6. 确定保存并重启电脑
+
+完成以上步骤后，重新运行"启动转码工具.bat"即可正常使用程序。
+
+如有任何问题，请联系技术支持。

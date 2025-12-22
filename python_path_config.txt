@@ -1,0 +1,12 @@
+# Python路径配置文件
+# 如果批处理文件无法自动找到Python环境，请在此文件中指定Python可执行文件的完整路径
+# 例如：
+# D:\Anaconda3\envs\mfa-env\python.exe
+# C:\Python39\python.exe
+# C:\Users\YourUsername\Anaconda3\python.exe
+
+# 已知可用的Python路径（根据你之前的终端输出）：
+D:\Anaconda3\envs\mfa-env\python.exe
+
+# 如果上面的路径不正确，请取消下面行的注释并修改为你的Python路径：
+# C:\Python39\python.exe
