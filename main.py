@@ -815,7 +815,7 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.log_message(f"目标响度 (LUFS): {self.target_lufs.get()}")
             self.log_message(f"最大真峰值 (dB): {self.max_true_peak.get()}")
             self.log_message(f"响度范围 (LU): {self.loudness_range.get()}")
-            self.log_message(f"处理模式: {self.loudness_mode.get()}")
+            self.log_message(f"音质增强(EQ): {self.enable_eq.get()}")
             self.log_message("========================")
             
             # 响度平衡功能默认启用，无需检查
