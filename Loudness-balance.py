@@ -12,6 +12,7 @@ import datetime
 import json
 import configparser
 import re
+import shutil
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
 # 设置控制台编码为UTF-8 (Windows兼容性)
@@ -46,6 +47,7 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if not self.ffmpeg_available:
             messagebox.showerror("错误", "未找到FFmpeg，请确保FFmpeg已安装并添加到系统PATH中。")
             sys.exit(1)
+        self.mp3_encoder = self.detect_mp3_encoder()
             
         # 检查GPU支持
         self.gpu_supported = self.check_gpu_support()
@@ -60,7 +62,10 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.audio_bitrate = tk.StringVar(value="192k")
         self.sample_rate = tk.StringVar(value="48000")
         self.audio_channels = tk.StringVar(value="2")
+        self.audio_output_format = tk.StringVar(value="mp3")
         self.enable_eq = tk.BooleanVar(value=False)  # 人声清晰度增强EQ
+        self.enable_dynamic_norm = tk.BooleanVar(value=True)  # 动态均衡，改善忽大忽小
+        self.loudness_mode = tk.StringVar(value="快速")  # 快速=单遍，精准=二遍 loudnorm
         
         # 配置拖放
         self.drop_target_register(DND_FILES)
@@ -119,6 +124,30 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return result.returncode == 0
         except:
             return False
+            
+    def detect_mp3_encoder(self):
+        """Detect an available FFmpeg MP3 encoder."""
+        try:
+            run_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "ignore",
+                "timeout": 30,
+            }
+            if os.name == 'nt':
+                run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                
+            result = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], **run_kwargs)
+            encoders = (result.stdout or "") + (result.stderr or "")
+            if "libmp3lame" in encoders:
+                return "libmp3lame"
+            if "mp3_mf" in encoders:
+                return "mp3_mf"
+        except Exception:
+            pass
+        return "libmp3lame"
             
     def create_widgets(self):
         """创建UI控件"""
@@ -231,6 +260,8 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.log_message(f"最大真峰值: {self.max_true_peak.get()} dB")
         self.log_message(f"响度范围: {self.loudness_range.get()} LU")
         self.log_message(f"音质增强(EQ): {self.enable_eq.get()}")
+        self.log_message(f"动态均衡: {self.enable_dynamic_norm.get()}")
+        self.log_message(f"响度模式: {self.loudness_mode.get()}")
         self.log_message("========================")
         
         # 创建进度条
@@ -282,7 +313,7 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # 说明文本
-        info_label = ctk.CTkLabel(scroll_frame, text="当前模式: 自动动态均衡 + 目标响度标准化\n(自动解决声音忽大忽小问题，并统一音量标准)", 
+        info_label = ctk.CTkLabel(scroll_frame, text="当前模式: 可选动态均衡 + 目标响度标准化\n(快速模式速度快，精准模式响度更稳定)", 
                                  font=("Arial", 14), text_color="gray")
         info_label.pack(fill="x", padx=10, pady=10)
         
@@ -296,6 +327,12 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         eq_check.pack(anchor="w", padx=20, pady=10)
         
         ctk.CTkLabel(enhance_frame, text="优化频率响应，消除低频噪音，提升人声清晰度。\n适合对话和短剧。", 
+                    text_color="gray", justify="left", font=("Arial", 12)).pack(anchor="w", padx=45, pady=0)
+        
+        dynamic_check = ctk.CTkCheckBox(enhance_frame, text="启用动态均衡（改善忽大忽小）", variable=self.enable_dynamic_norm)
+        dynamic_check.pack(anchor="w", padx=20, pady=(10, 5))
+        
+        ctk.CTkLabel(enhance_frame, text="对白素材建议开启；音乐或已处理过的音频可关闭，避免过度压缩。", 
                     text_color="gray", justify="left", font=("Arial", 12)).pack(anchor="w", padx=45, pady=0)
         
         # 2. 响度参数
@@ -328,6 +365,11 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         range_entry.grid(row=2, column=1, padx=10, pady=5)
         ctk.CTkLabel(ln_grid, text="(1 ~ 20)", text_color="gray").grid(row=2, column=2, padx=5, pady=5)
         
+        ctk.CTkLabel(ln_grid, text="处理模式:").grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        mode_combo = ctk.CTkComboBox(ln_grid, values=['快速', '精准'], variable=self.loudness_mode)
+        mode_combo.grid(row=3, column=1, padx=10, pady=5)
+        ctk.CTkLabel(ln_grid, text="精准会多分析一遍", text_color="gray").grid(row=3, column=2, padx=5, pady=5)
+        
         # 3. 音频输出设置
         audio_frame = ctk.CTkFrame(scroll_frame)
         audio_frame.pack(fill="x", padx=10, pady=10)
@@ -351,6 +393,10 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(af_grid, text="声道:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
         channels_combo = ctk.CTkComboBox(af_grid, values=['自动', '立体声 (2.0)', '单声道'], variable=self.audio_channels)
         channels_combo.grid(row=2, column=1, padx=10, pady=10)
+        
+        ctk.CTkLabel(af_grid, text="输出格式:").grid(row=3, column=0, padx=10, pady=10, sticky="w")
+        format_combo = ctk.CTkComboBox(af_grid, values=['mp3', 'wav'], variable=self.audio_output_format)
+        format_combo.grid(row=3, column=1, padx=10, pady=10)
         
         # 按钮区域
         btn_frame = ctk.CTkFrame(settings_window, fg_color="transparent")
@@ -392,7 +438,10 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 'audio_bitrate': self.audio_bitrate.get(),
                 'sample_rate': self.sample_rate.get(),
                 'audio_channels': self.audio_channels.get(),
-                'enable_eq': str(self.enable_eq.get())
+                'audio_output_format': self.audio_output_format.get(),
+                'enable_eq': str(self.enable_eq.get()),
+                'enable_dynamic_norm': str(self.enable_dynamic_norm.get()),
+                'loudness_mode': self.loudness_mode.get()
             }
 
             
@@ -420,7 +469,14 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     audio_bitrate = loudness_config.get('audio_bitrate', '192k')
                     sample_rate = loudness_config.get('sample_rate', '48000')
                     audio_channels = loudness_config.get('audio_channels', '2')
+                    audio_output_format = loudness_config.get('audio_output_format', 'mp3').lower()
+                    if audio_output_format not in ('mp3', 'wav'):
+                        audio_output_format = 'mp3'
                     enable_eq = loudness_config.get('enable_eq', 'False') == 'True'
+                    enable_dynamic_norm = loudness_config.get('enable_dynamic_norm', 'True') == 'True'
+                    loudness_mode = loudness_config.get('loudness_mode', '快速')
+                    if loudness_mode not in ('快速', '精准'):
+                        loudness_mode = '快速'
                     
                     self.target_lufs.set(target_lufs)
                     self.max_true_peak.set(max_true_peak)
@@ -428,7 +484,10 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     self.audio_bitrate.set(audio_bitrate)
                     self.sample_rate.set(sample_rate)
                     self.audio_channels.set(audio_channels)
+                    self.audio_output_format.set(audio_output_format)
                     self.enable_eq.set(enable_eq)
+                    self.enable_dynamic_norm.set(enable_dynamic_norm)
+                    self.loudness_mode.set(loudness_mode)
                     
                     self.log_message("响度平衡配置已加载")
                     self.log_message(f"加载的参数: 目标响度={target_lufs} LUFS, 音质增强={enable_eq}")
@@ -461,6 +520,115 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if hasattr(self, 'log_text') and self.log_text is not None:
             self.log_text.delete(1.0, tk.END)
         self.log_message("日志已清空")
+        
+    def get_audio_output_format(self):
+        """Return the selected audio-only output format."""
+        output_format = self.audio_output_format.get().strip().lower()
+        if output_format not in ("mp3", "wav"):
+            output_format = "mp3"
+        return output_format
+        
+    def build_audio_output_args(self):
+        """Build FFmpeg args for the selected audio-only output format."""
+        output_format = self.get_audio_output_format()
+        if output_format == "wav":
+            audio_args = ["-c:a", "pcm_s16le"]
+        else:
+            audio_args = ["-c:a", getattr(self, "mp3_encoder", "libmp3lame"), "-b:a", self.audio_bitrate.get()]
+            
+        if self.sample_rate.get() != "自动":
+            audio_args.extend(["-ar", self.sample_rate.get()])
+            
+        if self.audio_channels.get() != "自动":
+            if "立体声" in self.audio_channels.get():
+                audio_args.extend(["-ac", "2"])
+            elif "单声道" in self.audio_channels.get():
+                audio_args.extend(["-ac", "1"])
+                
+        return audio_args
+        
+    def run_ffmpeg(self, cmd, timeout=600):
+        """Run FFmpeg safely and return the completed process plus decoded stderr."""
+        run_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "timeout": timeout,
+        }
+        if os.name == 'nt':
+            run_kwargs["text"] = False
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            run_kwargs.update({"text": True, "encoding": "utf-8", "errors": "ignore"})
+            
+        result = subprocess.run(cmd, **run_kwargs)
+        if os.name == 'nt':
+            stderr_text = result.stderr.decode('utf-8', errors='ignore')
+        else:
+            stderr_text = result.stderr
+        return result, stderr_text
+        
+    def parse_loudnorm_stats(self, stderr_text):
+        """Extract loudnorm JSON stats from FFmpeg stderr."""
+        matches = re.findall(r'\{[\s\S]*?\}', stderr_text)
+        for candidate in reversed(matches):
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            required = {"input_i", "input_tp", "input_lra", "input_thresh", "target_offset"}
+            if required.issubset(data):
+                return data
+        return None
+        
+    def build_pre_loudness_filters(self):
+        """Build optional filters that run before loudnorm."""
+        filters = []
+        if self.enable_eq.get():
+            filters.append("highpass=f=80,lowshelf=g=-2:f=300,equalizer=f=3000:t=q:w=1:g=3")
+        if self.enable_dynamic_norm.get():
+            filters.append("dynaudnorm=f=500:g=31:p=0.95:m=10.0:r=0.9")
+        return filters
+        
+    def build_loudnorm_filter(self, stats=None):
+        """Build quick or measured loudnorm filter arguments."""
+        base = (
+            f"loudnorm=I={self.target_lufs.get()}:"
+            f"TP={self.max_true_peak.get()}:"
+            f"LRA={self.loudness_range.get()}"
+        )
+        if stats:
+            base += (
+                f":measured_I={stats['input_i']}"
+                f":measured_TP={stats['input_tp']}"
+                f":measured_LRA={stats['input_lra']}"
+                f":measured_thresh={stats['input_thresh']}"
+                f":offset={stats['target_offset']}"
+                ":linear=true"
+            )
+        return base + ":print_format=json"
+        
+    def replace_output_file_safely(self, output_path, final_path, source_path=None):
+        """Copy to a verified temp file before replacing the final path."""
+        final_dir = os.path.dirname(final_path)
+        if final_dir and not os.path.exists(final_dir):
+            os.makedirs(final_dir, exist_ok=True)
+            
+        replace_tmp = f"{final_path}.replacing"
+        if os.path.exists(replace_tmp):
+            os.remove(replace_tmp)
+            
+        try:
+            shutil.copy2(output_path, replace_tmp)
+            if not os.path.exists(replace_tmp) or os.path.getsize(replace_tmp) == 0:
+                raise IOError("替换临时文件无效或为空")
+                
+            os.replace(replace_tmp, final_path)
+            if source_path and os.path.abspath(source_path) != os.path.abspath(final_path) and os.path.exists(source_path):
+                os.remove(source_path)
+        except Exception:
+            if os.path.exists(replace_tmp):
+                os.remove(replace_tmp)
+            raise
         
     # 以下函数已移除，不再支持拖拽功能
     # def on_click(self, event):
@@ -662,15 +830,16 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     output_path
                 ])
             else:
-                # 音频文件 - 转换成AAC格式（128k码率）
+                # 音频文件 - 转换成设置中选择的格式
+                output_format = self.get_audio_output_format()
                 if self.overwrite_var.get():
                     # 覆盖源文件，先转码为临时文件
-                    output_path = os.path.join(file_dir, f"{file_name}_temp.aac")
+                    output_path = os.path.join(file_dir, f"{file_name}_temp.{output_format}")
                 else:
                     # 不覆盖源文件，添加_transcoded后缀
-                    output_path = os.path.join(file_dir, f"{file_name}_transcoded.aac")
+                    output_path = os.path.join(file_dir, f"{file_name}_transcoded.{output_format}")
                 
-                # 构建FFmpeg命令 - 转换为AAC格式（128k码率，保持原始时长）
+                # 构建FFmpeg命令，保持原始时长
                 cmd = [
                     "ffmpeg",
                     "-i", file_path,  # 输入文件
@@ -678,8 +847,7 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     "-map", "0:a:0",  # 明确映射第一个音频流
                     "-avoid_negative_ts", "make_zero",  # 避免负时间戳
                     "-fflags", "+genpts",  # 重新生成时间戳
-                    "-acodec", "aac",  # AAC编码器
-                    "-b:a", "128k",  # 128k码率
+                    *self.build_audio_output_args(),
                     "-map_metadata", "0",  # 保留所有元数据
                     "-y",  # 覆盖输出文件
                     output_path
@@ -769,8 +937,7 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                         if file_path.lower().endswith(('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm')):
                             new_output_path = os.path.join(file_dir, f"{file_name}{file_ext}")
                         else:
-                            # 音频文件改为.aac扩展名
-                            new_output_path = os.path.join(file_dir, f"{file_name}.aac")
+                            new_output_path = os.path.join(file_dir, f"{file_name}.{self.get_audio_output_format()}")
                         os.rename(output_path, new_output_path)
                         return "完成 (已覆盖源文件)"
                     except Exception as e:
@@ -816,6 +983,8 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.log_message(f"最大真峰值 (dB): {self.max_true_peak.get()}")
             self.log_message(f"响度范围 (LU): {self.loudness_range.get()}")
             self.log_message(f"音质增强(EQ): {self.enable_eq.get()}")
+            self.log_message(f"动态均衡: {self.enable_dynamic_norm.get()}")
+            self.log_message(f"响度模式: {self.loudness_mode.get()}")
             self.log_message("========================")
             
             # 响度平衡功能默认启用，无需检查
@@ -842,8 +1011,8 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
             total_files = len(files)
             completed_files = 0
             
-            self.status_var.set(f"正在处理... (0/{total_files})")
-            self.progress_bar.set(0)
+            self.after(0, self.status_var.set, f"正在处理... (0/{total_files})")
+            self.after(0, self.progress_bar.set, 0)
             self.after(0, self.log_message, f"开始批量响度平衡，共 {total_files} 个文件")
             
             # 单线程顺序处理
@@ -866,11 +1035,11 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 # 更新进度
                 completed_files += 1
                 progress = completed_files / total_files
-                self.progress_bar.set(progress)
-                self.status_var.set(f"正在处理... ({completed_files}/{total_files})")
+                self.after(0, self.progress_bar.set, progress)
+                self.after(0, self.status_var.set, f"正在处理... ({completed_files}/{total_files})")
                     
-            self.status_var.set("响度平衡完成")
-            self.progress_bar.set(1.0)
+            self.after(0, self.status_var.set, "响度平衡完成")
+            self.after(0, self.progress_bar.set, 1.0)
             self.after(0, self.log_message, "所有文件响度平衡完成")
             
             # 显示完成消息
@@ -913,64 +1082,60 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
             
             self.log_message(f"临时输出路径: {output_path}")
             
+            filters = self.build_pre_loudness_filters()
+            loudnorm_stats = None
+            if self.loudness_mode.get() == "精准":
+                analysis_filter = ",".join(filters + [self.build_loudnorm_filter()])
+                analysis_cmd = ["ffmpeg", "-hide_banner", "-y", "-i", file_path, "-map", "0:a:0", "-af", analysis_filter, "-f", "null", "-"]
+                self.log_message("精准模式：正在分析原始响度")
+                analysis_result, analysis_stderr = self.run_ffmpeg(analysis_cmd, timeout=600)
+                if analysis_result.returncode != 0:
+                    return f"失败: 响度分析失败 - {analysis_stderr[:200]}"
+                loudnorm_stats = self.parse_loudnorm_stats(analysis_stderr)
+                if not loudnorm_stats:
+                    return "失败: 无法解析响度分析结果"
+            
+            filter_str = ",".join(filters + [self.build_loudnorm_filter(loudnorm_stats)])
+            
             # 构建FFmpeg命令进行响度平衡处理
             cmd = [
                 "ffmpeg",
                 "-y",  # 覆盖输出文件
                 "-i", file_path,
-                "-map", "0",  # 映射所有流
                 "-avoid_negative_ts", "make_zero",  # 避免负时间戳
                 "-fflags", "+genpts",  # 重新生成时间戳
+                "-af", filter_str,
             ]
             
-            # 构建滤镜链
-            filters = []
-            
-            # 1. 人声清晰度增强 (EQ)
-            if self.enable_eq.get():
-                # highpass=f=80: 去除80Hz以下的低频噪音
-                # lowshelf=g=-2:f=300: 稍微衰减300Hz附近的浑浊感
-                # equalizer=f=3000:t=q:w=1:g=3: 提升3kHz附近的人声清晰度
-                filters.append("highpass=f=80,lowshelf=g=-2:f=300,equalizer=f=3000:t=q:w=1:g=3")
-            
-            # 2. 动态均衡 (dynaudnorm) - 解决忽大忽小
-            filters.append("dynaudnorm=f=500:g=31:p=0.95:m=10.0:r=0.9")
-            
-            # 3. 目标响度标准化 (loudnorm) - 统一输出电平
-            filters.append(f"loudnorm=I={self.target_lufs.get()}:TP={self.max_true_peak.get()}:LRA={self.loudness_range.get()}:print_format=json")
-            
-            # 组合滤镜
-            filter_str = ",".join(filters)
-            cmd.extend(["-af", filter_str])
-            
             # 根据文件类型添加适当的编码器参数
-            # 音频编码参数
-            audio_args = ["-c:a", "aac", "-b:a", self.audio_bitrate.get()]
+            # 视频容器仍使用 AAC 音轨，音频文件使用设置中选择的输出格式。
+            video_audio_args = ["-c:a", "aac", "-b:a", self.audio_bitrate.get()]
             
             # 采样率
             if self.sample_rate.get() != "自动":
-                audio_args.extend(["-ar", self.sample_rate.get()])
+                video_audio_args.extend(["-ar", self.sample_rate.get()])
                 
             # 声道
             if self.audio_channels.get() != "自动":
                 if "立体声" in self.audio_channels.get():
-                    audio_args.extend(["-ac", "2"])
+                    video_audio_args.extend(["-ac", "2"])
                 elif "单声道" in self.audio_channels.get():
-                    audio_args.extend(["-ac", "1"])
+                    video_audio_args.extend(["-ac", "1"])
             
             # 根据文件类型添加适当的编码器参数
             if file_path.lower().endswith(('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm')):
                 # 视频文件 - 复制视频流，只处理音频
+                cmd.extend(["-map", "0"])  # 映射所有流
                 cmd.extend(["-c:v", "copy"])  # 复制视频流
-                cmd.extend(audio_args)
+                cmd.extend(video_audio_args)
             else:
-                # 音频文件 - 统一输出为AAC格式
-                cmd.extend(audio_args)
-                # 如果原文件不是AAC格式，需要修改输出路径
-                if not file_ext.lower() == '.aac':
-                    output_path = output_path.replace(file_ext, '.aac')
-                    final_path = final_path.replace(file_ext, '.aac')
-                    self.log_message(f"音频文件响度平衡后输出为AAC格式（128k码率）")
+                # 音频文件 - 输出为设置中选择的格式
+                output_format = self.get_audio_output_format()
+                cmd.extend(["-map", "0:a:0"])  # 只输出第一条音频流
+                cmd.extend(self.build_audio_output_args())
+                output_path = output_path.replace(file_ext, f'.{output_format}')
+                final_path = final_path.replace(file_ext, f'.{output_format}')
+                self.log_message(f"音频文件响度平衡后输出为{output_format.upper()}格式")
             
             # 添加输出路径
             cmd.append(output_path)
@@ -986,53 +1151,16 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 return f"失败: 无法创建输出目录 - {str(e)}"
                 
             # 执行FFmpeg命令
-            if os.name == 'nt':
-                result = subprocess.run(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE, 
-                    text=False,
-                    timeout=600,  # 10分钟超时
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                stderr_text = result.stderr.decode('utf-8', errors='ignore')
-            else:
-                result = subprocess.run(
-                    cmd, 
-                    stdout=subprocess.PIPE, 
-                    stderr=subprocess.PIPE, 
-                    text=True, 
-                    encoding='utf-8',
-                    errors='ignore',
-                    timeout=600
-                )
-                stderr_text = result.stderr
+            result, stderr_text = self.run_ffmpeg(cmd, timeout=600)
             
             # 处理结果
             if result.returncode == 0:
                 try:
-                    # 确保目标目录存在
-                    final_dir = os.path.dirname(final_path)
-                    if not os.path.exists(final_dir):
-                        os.makedirs(final_dir, exist_ok=True)
-                        
-                    # 复制文件到最终位置
-                    import shutil
-                    
-                    # 如果是覆盖源文件且格式发生了变化（如MP3->WAV）
+                    self.log_message(f"处理成功，正在将文件从 {output_path} 写入到 {final_path}")
                     if self.overwrite_var.get():
-                        # 删除原文件（可能是不同格式）
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                            self.log_message(f"已删除原文件: {file_path}")
-                        
-                        # 将处理后的文件复制到原文件位置（但可能是新格式）
-                        self.log_message(f"处理成功，正在将文件从 {output_path} 复制到 {final_path}")
-                        shutil.copy2(output_path, final_path)
+                        self.replace_output_file_safely(output_path, final_path, source_path=file_path)
                     else:
-                        # 不覆盖源文件，直接复制到目标位置
-                        self.log_message(f"处理成功，正在将文件从 {output_path} 复制到 {final_path}")
-                        shutil.copy2(output_path, final_path)
+                        self.replace_output_file_safely(output_path, final_path)
                     
                     # 删除临时文件
                     os.remove(output_path)
@@ -1048,84 +1176,6 @@ class TranscoderApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 # 删除临时文件（如果存在）
                 if os.path.exists(output_path):
                     os.remove(output_path)
-                
-                # 如果是MP3文件且使用mp3_mf编码器失败，尝试使用AAC编码器作为回退
-                if (file_ext.lower() == '.mp3' and 
-                    "mp3_mf" in str(cmd) and 
-                    "Error while opening encoder" in stderr_text):
-                    
-                    self.log_message("mp3_mf编码器失败，尝试使用AAC编码器作为回退")
-                    
-                    # 为AAC编码器创建新的输出路径（使用.aac扩展名）
-                    fallback_output_path = output_path.replace('.mp3', '.aac')
-                    fallback_final_path = final_path.replace('.mp3', '.aac')
-                    
-                    # 重新构建命令，使用AAC编码器
-                    fallback_cmd = [
-                        "ffmpeg",
-                        "-y",  # 覆盖输出文件
-                        "-i", file_path,
-                        "-af", filter_str,
-                        "-c:a", "aac", "-b:a", "128k",
-                        fallback_output_path
-                    ]
-                    
-                    # 重新执行命令
-                    try:
-                        if os.name == 'nt':
-                            fallback_result = subprocess.run(
-                                fallback_cmd, 
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE, 
-                                text=False,
-                                timeout=600,
-                                creationflags=subprocess.CREATE_NO_WINDOW
-                            )
-                            fallback_stderr = fallback_result.stderr.decode('utf-8', errors='ignore')
-                        else:
-                            fallback_result = subprocess.run(
-                                fallback_cmd, 
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE, 
-                                text=True, 
-                                encoding='utf-8',
-                                errors='ignore',
-                                timeout=600
-                            )
-                            fallback_stderr = fallback_result.stderr
-                        
-                        if fallback_result.returncode == 0:
-                            self.log_message("使用AAC编码器回退成功")
-                            # 继续处理成功的情况
-                            try:
-                                # 确保目标目录存在
-                                final_dir = os.path.dirname(fallback_final_path)
-                                if not os.path.exists(final_dir):
-                                    os.makedirs(final_dir, exist_ok=True)
-                                    
-                                # 如果是覆盖源文件，先删除原文件
-                                if self.overwrite_var.get() and os.path.exists(fallback_final_path):
-                                    os.remove(fallback_final_path)
-                                    
-                                # 复制文件到最终位置
-                                import shutil
-                                self.log_message(f"处理成功，正在将文件从 {fallback_output_path} 复制到 {fallback_final_path}")
-                                shutil.copy2(fallback_output_path, fallback_final_path)
-                                
-                                # 删除临时文件
-                                os.remove(fallback_output_path)
-                                
-                                if self.overwrite_var.get():
-                                    return "完成 (已覆盖源文件，使用AAC编码)"
-                                else:
-                                    return "完成 (使用AAC编码)"
-                            except Exception as e:
-                                self.log_message(f"复制文件失败: {str(e)}")
-                                return f"完成 (复制文件时出错: {str(e)})"
-                        else:
-                            self.log_message("AAC编码器回退也失败")
-                    except Exception as e:
-                        self.log_message(f"回退尝试失败: {str(e)}")
                 
                 # 提取关键错误信息
                 error_msg = f"FFmpeg失败 (返回码: {result.returncode})"
